@@ -1,0 +1,208 @@
+---
+title: "Multilinear Regression"
+author: "Jonathan Then"
+date: '2022-10-22'
+output: html_document
+---
+
+```{r setup, warning=FALSE}
+#LIBRARIES
+library(tidyverse)
+library(sjPlot)
+library(caret)
+```
+
+UNDERSTANDING THE DATA
+ndvi_se – Pixel southeast of city centroid
+ndvi_sw – Pixel southwest of city centroid
+ndvi_ne – Pixel northeast of city centroid
+ndvi_nw – Pixel northwest of city centroid
+
+precipitation_amt_mm – Total precipitation
+
+reanalysis_air_temp_k – Mean air temperature
+reanalysis_precip_amt_kg_per_m2 – Total precipitation
+reanalysis_relative_humidity_percent – Mean relative humidity
+reanalysis_tdtr_k – Diurnal temperature range
+
+station_avg_temp_c – Average temperature
+station_diur_temp_rng_c – Diurnal temperature range
+station_max_temp_c – Maximum temperature
+station_min_temp_c – Minimum temperature
+station_precip_mm – Total precipitation
+
+
+```{r}
+#READ IN DATA
+data_features = read.csv('dengue_features_train.csv')
+data_labels = read.csv('dengue_labels_train.csv')
+
+#REMOVE week_start_date
+data_features = subset(data_features, select = -c(week_start_date))
+
+#REMOVE index columns and correlated columns
+data_features = subset(data_features, select = -c(reanalysis_avg_temp_k, reanalysis_dew_point_temp_k, reanalysis_max_air_temp_k, reanalysis_min_air_temp_k, reanalysis_sat_precip_amt_mm, reanalysis_specific_humidity_g_per_kg))
+
+#REPLACE NA
+data_features[is.na(data_features)] <- 0
+
+#GROUP by city
+sj <- data_features %>% filter(city == "sj")
+iq <- data_features %>% filter(city == "iq")
+
+#JOIN predictor into dataset
+sj_cases <- subset(data_labels, city =="sj", select = total_cases)
+iq_cases <- subset(data_labels, city =="iq", select = total_cases)
+
+sj <- cbind(sj, sj_cases)
+iq <- cbind(iq, iq_cases)
+
+#REMOVE index columns
+sj = subset(sj, select = -c(city, year, weekofyear))
+iq = subset(iq, select = -c(city, year, weekofyear))
+```
+
+```{r}
+#Multilinear Regression Model Full Model - San Juan
+M0 = lm(total_cases ~ 1, data = sj)
+M1 = lm(total_cases ~ ., data = sj)
+
+sjPlot::tab_model(M1, digits = 4, show.ci = FALSE)
+```
+
+```{r}
+#Backward Stepwise Search using AIC (SJ)
+step.back.aic = step(M1, direction = "backward",trace = FALSE)
+summary(step.back.aic)
+```
+
+```{r}
+#Forward Stepwise Search using AIC (SJ)
+step.fwd.aic = step(M0, scope = list(lower = M0, upper = M1), direction = "forward", trace = FALSE)
+summary(step.fwd.aic)
+```
+
+```{r}
+sjPlot::tab_model(
+step.fwd.aic, step.back.aic,
+show.ci = FALSE,
+show.aic = TRUE,
+dv.labels = c("Forward model (SJ)","Backward model (SJ)")
+)
+```
+
+```{r}
+#Multilinear Regression Model Full Model - Iquitos
+M2 = lm(total_cases ~ 1, data = iq)
+M3 = lm(total_cases ~ ., data = iq)
+
+sjPlot::tab_model(M3, digits = 4, show.ci = FALSE)
+```
+
+```{r}
+#Backward Stepwise Search using AIC (IQ)
+step.back.aic = step(M3, direction = "backward",trace = FALSE)
+summary(step.back.aic)
+```
+
+```{r}
+#Forward Stepwise Search using AIC (IQ)
+step.fwd.aic = step(M2, scope = list(lower = M2, upper = M3), direction = "forward", trace = FALSE)
+summary(step.fwd.aic)
+```
+
+```{r}
+sjPlot::tab_model(
+step.fwd.aic, step.back.aic,
+show.ci = FALSE,
+show.aic = TRUE,
+dv.labels = c("Forward model (IQ)","Backward model (IQ)")
+)
+```
+
+
+```{r}
+#5-Fold Cross Validation - Full Model (SJ)
+cv_full_sj = train(
+  total_cases ~ ., data=sj,
+  method = "lm",
+  trControl = trainControl(
+    method = "cv", number = 5,
+    verboseIter = FALSE
+  )
+)
+cv_full_sj
+```
+
+```{r}
+#5-Fold Cross Validation - Subset Model (SJ)
+cv_subset_sj = train(
+  total_cases ~ ndvi_se + ndvi_sw + reanalysis_air_temp_k + 
+    reanalysis_tdtr_k + station_avg_temp_c + station_max_temp_c, data=sj,
+  method = "lm",
+  trControl = trainControl(
+    method = "cv", number = 5,
+    verboseIter = FALSE
+  )
+)
+cv_subset_sj
+```
+
+```{r}
+#5-Fold Cross Validation - Full Model (IQ)
+cv_full_iq = train(
+  total_cases ~ ., data=iq,
+  method = "lm",
+  trControl = trainControl(
+    method = "cv", number = 5,
+    verboseIter = FALSE
+  )
+)
+cv_full_iq
+```
+
+```{r}
+#5-Fold Cross Validation - Subset Model (IQ)
+cv_subset_iq = train(
+  total_cases ~ ndvi_se + ndvi_sw + reanalysis_air_temp_k + 
+    reanalysis_tdtr_k + station_avg_temp_c, data=iq,
+  method = "lm",
+  trControl = trainControl(
+    method = "cv", number = 5,
+    verboseIter = FALSE
+  )
+)
+cv_subset_iq
+```
+
+```{r}
+cv_sj = rbind("Full Model (SJ)" = cv_full_sj$results, "Subset Model (SJ)" = cv_subset_sj$results)
+cv_sj
+```
+
+```{r}
+cv_iq = rbind("Full Model (IQ)" = cv_full_iq$results, "Subset Model (IQ)" = cv_subset_iq$results)
+cv_iq
+```
+
+```{r}
+rmse_sj_full = 49.19337**2
+rmse_sj_ss = 48.55353**2
+mse_sj = rbind("Full Model (SJ)" = rmse_sj_full, "Subset Model (SJ)" = rmse_sj_ss)
+colnames(mse_sj) <- c("MSE")
+
+mse_sj
+```
+
+```{r}
+rmse_iq_full = 11.35435**2
+rmse_iq_ss = 10.67549**2
+mse_iq = rbind("Full Model (IQ)" = rmse_iq_full, "Subset Model (IQ)" = rmse_iq_ss)
+colnames(mse_iq) <- c("MSE")
+
+mse_iq
+```
+
+```{r}
+
+```
